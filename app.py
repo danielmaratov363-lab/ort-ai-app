@@ -14,12 +14,14 @@ if not api_key:
     st.error("Ошибка: API-ключ не найден. Добавьте GEMINI_API_KEY в Secrets.")
     st.stop()
 
+# Инициализация клиента Google GenAI
 client = genai.Client(api_key=api_key)
 
-# Системная инструкция, которая превращает ИИ в репетитора
+# Подробная и умная инструкция репетитора для качественных ответов
 SYSTEM_PROMPT = """
 Ты — профессиональный, доброжелательный и терпеливый репетитор по подготовке к Общереспубликанскому тестированию (ОРТ) в Кыргызстане.
-Твоя задача — помогать ученикам правильно решать задачи и глубоко понимать темы.
+Твоя задача — не просто давать сухой ответ, а помогать ученикам глубоко понимать тему.
+Всегда объясняй логику решения задач пошагово, приводи понятные примеры (например, с числами вроде 100 для процентов) и в конце предлагай ученику похожую задачку для тренировки, чтобы он закрепил материал.
 """
 
 # Поле для ввода вопроса пользователем
@@ -30,13 +32,21 @@ if user_input:
         st.write(user_input)
 
     with st.chat_message("assistant"):
-        with st.spinner("Думаю над решением..."):
-            try:
-                response = client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=user_input,
-                    config={"system_instruction": SYSTEM_PROMPT}
-                )
-                st.write(response.text)
-            except Exception as e:
-                st.error(f"Произошла ошибка: {e}")
+        try:
+            # Используем модель gemini-2.5-flash и потоковый вывод для максимальной скорости
+            response_stream = client.models.generate_content_stream(
+                model="gemini-2.5-flash",
+                contents=user_input,
+                config={"system_instruction": SYSTEM_PROMPT}
+            )
+            
+            # Функция для красивого вывода текста по кусочкам в реальном времени
+            def stream_parser():
+                for chunk in response_stream:
+                    if chunk.text:
+                        yield chunk.text
+
+            st.write_stream(stream_parser)
+            
+        except Exception as e:
+            st.error(f"Произошла ошибка: {e}")
