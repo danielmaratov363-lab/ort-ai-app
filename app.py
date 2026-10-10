@@ -32,27 +32,14 @@ if user_input:
         st.write(user_input)
 
     with st.chat_message("assistant"):
-        # Список моделей: сначала пробуем основную, при перегрузке — запасные
-        models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
-        response_stream = None
-
-        for model_name in models_to_try:
+        with st.spinner("Репетитор думает над ответом..."):
             try:
-                response_stream = client.models.generate_content_stream(
-                    model=model_name,
+                # Используем надежную стандартную генерацию, которая работает без сбоев
+                response = client.models.generate_content(
+                    model="gemini-3.8-flash",
                     contents=user_input,
                     config={"system_instruction": SYSTEM_PROMPT}
                 )
-                break  # Если запрос ушел успешно, выходим из цикла
-            except Exception:
-                continue  # Если модель перегружена, пробуем следующую
-
-        if response_stream:
-            def stream_parser():
-                for chunk in response_stream:
-                    if chunk.text:
-                        yield chunk.text
-
-            st.write_stream(stream_parser)
-        else:
-            st.error("Серверы сейчас сильно перегружены. Попробуйте еще раз через несколько секунд.")
+                st.write(response.text)
+            except Exception as e:
+                st.error(f"Произошла ошибка: {e}")
