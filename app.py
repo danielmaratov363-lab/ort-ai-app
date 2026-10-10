@@ -33,7 +33,7 @@ if user_input:
         with st.spinner("Думаю над решением..."):
             try:
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-3.8-flash",
                     contents=user_input,
                     config={"system_instruction": SYSTEM_PROMPT}
                 )
