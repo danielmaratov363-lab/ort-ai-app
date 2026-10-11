@@ -53,7 +53,7 @@ def get_client():
 
 
 def ask_ai(prompt, image_bytes=None, mime_type="image/jpeg"):
-  """Получение ответа от Gemini."""
+  """Получение ответа от Gemini с выводом точной ошибки."""
   try:
     client = get_client()
 
@@ -69,16 +69,17 @@ def ask_ai(prompt, image_bytes=None, mime_type="image/jpeg"):
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
-            temperature=0.2,  # Ускоряет генерацию и делает ответы точнее
-            max_output_tokens=500,  # Уменьшает длину ответа для скорости
+            temperature=0.2,
+            max_output_tokens=500,
         ),
     )
 
     return response.text or "ИИ не вернул текст. Попробуй ещё раз."
 
   except Exception as e:
-    print("Gemini API error:", repr(e))
-    return None
+    # Возвращаем текст ошибки прямо в чат, чтобы увидеть причину
+    return f"⚠️ ТЕХНИЧЕСКАЯ ОШИБКА: {repr(e)}"
+
 
 
 def create_quiz(subject, count, difficulty, language):
