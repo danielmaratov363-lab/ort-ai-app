@@ -1,364 +1,345 @@
+import streamlit as st
+import time
 from google import genai
 from google.genai import types
-import json
-import re
-import time
-import streamlit as st
 
-st.set_page_config(page_title="ОРТ AI", page_icon="🎓", layout="centered")
+# ---------------- НАСТРОЙКИ ----------------
+
+st.set_page_config(
+    page_title="ORT AI",
+    page_icon="🎓",
+    layout="centered"
+)
+
+MODEL = "gemini-3.5-flash-lite"
+MAX_OUTPUT_TOKENS = 2048
 
 SYSTEM_PROMPT = """
-Ты — ОРТ AI, опытный и поддерживающий ИИ-репетитор для подготовки к Общереспубликанскому тестированию (ОРТ) в Кыргызстане.
+Ты — ORT AI, опытный ИИ-репетитор для подготовки к ОРТ в Кыргызстане.
 
-ТВОЙ СТИЛЬ И ПРАВИЛА:
-1. Давай развёрнутые, структурированные и подробные объяснения.
-2. Объясняй темы и задачи пошагово: сначала суть, затем пример или ход решения, в конце — вывод или совет.
-3. Математику и логику разбирай максимально детально с формулами и вычислениями.
-4. Отвечай дружелюбно, как настоящий квалифицированный учитель.
-5. Если приложено фото задания, прочитай его полностью, приведи условие и разбери решение по шагам.
-6. Отвечай на языке пользователя (русский/кыргызский).
+Правила:
+1. Отвечай на русском или кыргызском языке — в зависимости от языка ученика.
+2. Объясняй подробно, понятно и пошагово.
+3. В математике показывай формулы, вычисления и итоговый ответ.
+4. В логике объясняй ход рассуждений.
+5. Если пользователь отправил фотографию задания, прочитай условие и реши его по шагам.
+6. Если фотография нечёткая, попроси прислать более чёткую.
+7. Не выдумывай информацию, которой нет в условии.
+8. Будь дружелюбным и терпеливым учителем.
+9. Помогай ученику понять решение, а не только получить ответ.
+10. По возможности добавляй похожий пример для самостоятельной практики.
 """
 
-# Актуальная и быстрая модель
-MODEL = "gemini-3.5-flash-lite"
-
-SUBJECTS = ["Общий вопрос", "Математика", "Логика", "Аналогии", "Чтение"]
-
-LANGUAGES = ["Русский", "Кыргызский", "Казахский"]
-
-# Состояние приложения
-if "messages" not in st.session_state:
-  st.session_state.messages = []
-
-if "quiz" not in st.session_state:
-  st.session_state.quiz = None
-
-if "quiz_answers" not in st.session_state:
-  st.session_state.quiz_answers = {}
-
-if "quiz_submitted" not in st.session_state:
-  st.session_state.quiz_submitted = False
-
+# ---------------- ПОДКЛЮЧЕНИЕ К GEMINI ----------------
 
 @st.cache_resource
 def get_client():
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+
+    if not api_key:
+        return None
+
     return genai.Client(
-        api_key=st.secrets["GEMINI_API_KEY"],
-        http_options={"timeout": 60000}
+        api_key=api_key,
+        http_options={"timeout": 90000}
     )
 
 
 def ask_ai(prompt, image_bytes=None, mime_type="image/jpeg"):
-  """Получение полноценного и развёрнутого ответа от Gemini."""
-  try:
     client = get_client()
+
+    if client is None:
+        return (
+            "⚠️ Не найден GEMINI_API_KEY. "
+            "Проверь Secrets в настройках Streamlit."
+        )
 
     contents = [prompt]
 
     if image_bytes:
-      contents.append(
-          types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-      )
+        contents.append(
+            types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=mime_type
+            )
+        )
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=0.4,
-            max_output_tokens=2048,  # Достаточно места для подробных объяснений
-        ),
+    last_error = None
+
+    # Повторяем запрос один раз при временной ошибке
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.4,
+                    max_output_tokens=MAX_OUTPUT_TOKENS
+                )
+            )
+
+            if response.text:
+                return response.text
+
+            return "ИИ не вернул текст. Попробуй задать вопрос иначе."
+
+        except Exception as e:
+            last_error = e
+            error = str(e).lower()
+
+            temporary_error = any(
+                code in error
+                for code in [
+                    "503",
+                    "504",
+                    "429",
+                    "unavailable",
+                    "deadline_exceeded",
+                    "resource_exhausted"
+                ]
+            )
+
+            if attempt == 0 and temporary_error:
+                time.sleep(2)
+                continue
+
+            break
+
+    error = str(last_error).lower()
+
+    if "503" in error or "unavailable" in error:
+        return (
+            "⚠️ **Gemini временно недоступен.**\n\n"
+            "Подожди немного и попробуй снова. "
+            "Это может быть временная проблема сервера Google."
+        )
+
+    if "504" in error or "deadline_exceeded" in error:
+        return (
+            "⏳ **Gemini не успел ответить вовремя.**\n\n"
+            "Попробуй ещё раз через минуту. "
+            "Если ошибка повторяется, нужно проверить доступность модели."
+        )
+
+    if "429" in error or "resource_exhausted" in error:
+        return (
+            "⚠️ **Достигнут лимит запросов Gemini.**\n\n"
+            "Проверь лимиты API или попробуй позже."
+        )
+
+    if "404" in error or "not_found" in error:
+        return (
+            f"⚠️ Модель `{MODEL}` не найдена или недоступна. "
+            "Нужно проверить список моделей, доступных твоему API-ключу."
+        )
+
+    if "403" in error or "permission_denied" in error:
+        return (
+            "⚠️ Нет доступа к Gemini API. "
+            "Проверь API-ключ и разрешения."
+        )
+
+    return (
+        "⚠️ Не удалось получить ответ.\n\n"
+        f"Техническая информация: `{str(last_error)[:500]}`"
     )
 
-    return response.text or "ИИ не вернул текст. Попробуй ещё раз."
 
-  except Exception as e:
-    return f"⚠️ ТЕХНИЧЕСКАЯ ОШИБКА: {repr(e)}"
+# ---------------- СОСТОЯНИЕ ПРИЛОЖЕНИЯ ----------------
 
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-def create_quiz(subject, count, difficulty, language):
-  """Создание тренировочного теста."""
-  prompt = f"""
-Создай тренировочный тест для подготовки к ОРТ в Кыргызстане.
-
-Предмет: {subject}
-Количество вопросов: {count}
-Сложность: {difficulty}
-Язык: {language}
-
-Требования:
-- Ровно {count} вопросов.
-- У каждого вопроса ровно четыре варианта ответа.
-- Только один правильный ответ.
-- Вопросы должны быть грамотными и корректными.
-- Для каждого вопроса добавь короткое объяснение.
-- Не добавляй текст вне JSON.
-
-Формат:
-{{
-  "questions": [
-    {{
-      "question": "Текст вопроса",
-      "options": ["Вариант A", "Вариант B", "Вариант C", "Вариант D"],
-      "answer": 0,
-      "explanation": "Короткое объяснение"
-    }}
-  ]
-}}
-
-answer — индекс правильного варианта, начиная с нуля.
-"""
-  result = ask_ai(prompt)
-
-  if not result:
-    return None
-
-  try:
-    result = result.strip()
-    result = re.sub(r"^```(?:json)?\s*", "", result)
-    result = re.sub(r"\s*```$", "", result)
-
-    data = json.loads(result)
-    questions = data.get("questions", [])
-
-    valid = []
-
-    for q in questions:
-      if not isinstance(q, dict):
-        continue
-
-      options = q.get("options")
-      answer = q.get("answer")
-
-      if (
-          isinstance(q.get("question"), str)
-          and isinstance(options, list)
-          and len(options) == 4
-          and isinstance(answer, int)
-          and not isinstance(answer, bool)
-          and 0 <= answer < 4
-      ):
-        valid.append(q)
-
-    return valid or None
-
-  except Exception as e:
-    print("Quiz parsing error:", repr(e))
-    return None
+if "quiz_submitted" not in st.session_state:
+    st.session_state.quiz_submitted = False
 
 
-# Заголовок
-st.title("🎓 ОРТ AI")
+# ---------------- ЗАГОЛОВОК ----------------
+
+st.title("🎓 ORT AI")
 st.caption("Твой ИИ-помощник для подготовки к ОРТ")
 
-with st.sidebar:
-  st.header("⚙️ Настройки")
-
-  subject = st.selectbox("Предмет", SUBJECTS, key="main_subject")
-
-  language = st.selectbox("Язык ответа", LANGUAGES, key="main_language")
-
-  st.divider()
-  st.write("⚡ Быстрые ответы")
-  st.write("📸 Решение заданий по фото")
-  st.write("📝 Тренировочные тесты")
-
-  if st.button("🗑️ Очистить историю чата"):
-    st.session_state.messages = []
-    st.rerun()
+chat_tab, quiz_tab = st.tabs(
+    ["💬 ИИ-репетитор", "📝 Тесты ОРТ"]
+)
 
 
-chat_tab, quiz_tab = st.tabs(["💬 ИИ-репетитор", "📝 Тесты ОРТ"])
-
-
-# =========================================
-# ЧАТ И РЕШЕНИЕ ЗАДАНИЙ ПО ФОТО
-# =========================================
+# ---------------- ИИ-РЕПЕТИТОР ----------------
 
 with chat_tab:
-  st.subheader("Задай вопрос или отправь фото")
+    st.subheader("Задай вопрос или отправь фото")
 
-  with st.expander("📸 Сфотографировать или загрузить задание"):
-    camera = st.camera_input("Сфотографируй задание")
-
-    upload = st.file_uploader(
-        "Или выбери изображение", type=["jpg", "jpeg", "png", "webp"]
+    uploaded = st.file_uploader(
+        "📷 Загрузить фотографию задания",
+        type=["png", "jpg", "jpeg", "webp"]
     )
 
-  photo = None
-  mime_type = "image/jpeg"
+    col1, col2, col3 = st.columns(3)
 
-  if camera is not None:
-    photo = camera.getvalue()
-  elif upload is not None:
-    photo = upload.getvalue()
-    mime_type = upload.type or "image/jpeg"
+    quick_prompt = None
 
-  for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-      st.markdown(msg["content"])
-
-  question = st.chat_input("Напиши вопрос...")
-
-  col1, col2, col3 = st.columns(3)
-
-  if col1.button("➗ Дроби"):
-    question = "Объясни дроби на простом примере."
-
-  if col2.button("📊 Проценты"):
-    question = "Объясни, как решать задачи на проценты."
-
-  if col3.button("🧠 Логика"):
-    question = "Дай одно задание на логику уровня ОРТ и объясни решение."
-
-  if question:
-    st.session_state.messages.append({"role": "user", "content": question})
-
-    with st.chat_message("user"):
-      st.markdown(question)
-
-      if photo:
-        st.image(photo, caption="Фото задания", use_container_width=True)
-
-    prompt = f"""
-Предмет: {subject}
-Язык ответа: {language}
-Вопрос ученика: {question}
-
-Дай подробное, развернутое объяснение.
-Если есть задача, покажи правильное решение по шагам.
-Если приложено изображение, разбери задание с него.
-"""
-
-    with st.chat_message("assistant"):
-      with st.spinner("Думаю..."):
-        answer = ask_ai(prompt, image_bytes=photo, mime_type=mime_type)
-
-      if answer:
-        st.markdown(answer)
-
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-      else:
-        st.error(
-            "Не удалось получить ответ. Проверь подключение к Gemini API и Logs."
+    if col1.button("➗ Дроби", use_container_width=True):
+        quick_prompt = (
+            "Объясни дроби для ОРТ подробно. "
+            "Покажи правила и примеры с решениями."
         )
 
+    if col2.button("📊 Проценты", use_container_width=True):
+        quick_prompt = (
+            "Объясни проценты для ОРТ. "
+            "Покажи формулы и пошаговые решения примеров."
+        )
 
-# =========================================
-# ТЕСТЫ ОРТ
-# =========================================
+    if col3.button("🧠 Логика", use_container_width=True):
+        quick_prompt = (
+            "Объясни логическое мышление для ОРТ "
+            "и покажи примеры с подробными решениями."
+        )
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    user_prompt = st.chat_input("Напиши вопрос...")
+
+    prompt = quick_prompt or user_prompt
+
+    if prompt:
+        st.session_state.messages.append({
+            "role": "user",
+            "content": prompt
+        })
+
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        image_bytes = uploaded.getvalue() if uploaded else None
+        mime_type = (
+            uploaded.type
+            if uploaded and uploaded.type
+            else "image/jpeg"
+        )
+
+        with st.chat_message("assistant"):
+            with st.spinner("ORT AI думает над ответом..."):
+                answer = ask_ai(
+                    prompt,
+                    image_bytes=image_bytes,
+                    mime_type=mime_type
+                )
+
+            st.markdown(answer)
+
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer
+        })
+
+    if st.button("🧹 Очистить историю чата"):
+        st.session_state.messages = []
+        st.rerun()
+
+
+# ---------------- ТРЕНИРОВОЧНЫЕ ТЕСТЫ ----------------
 
 with quiz_tab:
-  st.subheader("📝 Тренировочный тест")
+    st.subheader("Мини-тест по математике и логике")
 
-  quiz_subject = st.selectbox("Выбери предмет теста", SUBJECTS[1:], key="quiz_subject")
+    questions = [
+        {
+            "q": "1. Сколько будет 25% от 800?",
+            "options": ["100", "200", "250", "400"],
+            "correct": 1,
+            "explanation": "800 × 25 / 100 = 200."
+        },
+        {
+            "q": "2. Вычисли: 3/4 + 1/8",
+            "options": ["4/12", "7/8", "1", "5/8"],
+            "correct": 1,
+            "explanation": "3/4 = 6/8. Поэтому 6/8 + 1/8 = 7/8."
+        },
+        {
+            "q": "3. Продолжи ряд: 2, 6, 18, 54, ...",
+            "options": ["108", "162", "216", "56"],
+            "correct": 1,
+            "explanation": "Каждое число умножается на 3. 54 × 3 = 162."
+        },
+        {
+            "q": "4. Товар стоил 800 сомов. Цена снизилась на 25%. Новая цена?",
+            "options": ["200 сомов", "600 сомов", "700 сомов", "750 сомов"],
+            "correct": 1,
+            "explanation": "25% от 800 = 200. Новая цена: 800 − 200 = 600 сомов."
+        },
+        {
+            "q": "5. Все квадраты — прямоугольники. Все прямоугольники — фигуры. Значит ли это, что все квадраты — фигуры?",
+            "options": [
+                "Да",
+                "Нет",
+                "Только некоторые",
+                "Нельзя определить"
+            ],
+            "correct": 0,
+            "explanation": "Да. Если каждый квадрат является прямоугольником, а каждый прямоугольник — фигурой, то каждый квадрат является фигурой."
+        }
+    ]
 
-  count = st.selectbox("Количество вопросов", [5, 10, 15], key="quiz_count")
+    with st.form("ort_test"):
+        selected_answers = []
 
-  difficulty = st.selectbox(
-      "Сложность", ["Лёгкая", "Средняя", "Сложная"], key="quiz_difficulty"
-  )
-
-  if st.button("🚀 Создать тест", type="primary", use_container_width=True):
-    with st.spinner("Готовлю вопросы..."):
-      quiz = create_quiz(quiz_subject, count, difficulty, language)
-
-    if quiz:
-      st.session_state.quiz = quiz
-      st.session_state.quiz_answers = {}
-      st.session_state.quiz_submitted = False
-      st.rerun()
-    else:
-      st.error("Не получилось создать тест. Попробуй ещё раз.")
-
-  quiz = st.session_state.quiz
-
-  if quiz:
-    st.divider()
-    st.markdown(f"### Тест: {quiz_subject}")
-
-    if not st.session_state.quiz_submitted:
-      with st.form("ort_test_form"):
-        for i, q in enumerate(quiz):
-          st.markdown(f"**Вопрос {i + 1}.** {q['question']}")
-
-          st.radio(
-              "Выбери ответ",
-              options=[0, 1, 2, 3],
-              format_func=lambda x, opts=q["options"]: (
-                  f"{chr(65 + x)}. {opts[x]}"
-              ),
-              index=None,
-              key=f"answer_{i}",
-          )
-
-          st.divider()
+        for i, question in enumerate(questions):
+            answer = st.radio(
+                question["q"],
+                question["options"],
+                index=None,
+                key=f"question_{i}"
+            )
+            selected_answers.append(answer)
 
         submitted = st.form_submit_button(
-            "✅ Проверить ответы", use_container_width=True
+            "Проверить ответы",
+            use_container_width=True
         )
 
-      if submitted:
-        st.session_state.quiz_answers = {
-            i: st.session_state.get(f"answer_{i}") for i in range(len(quiz))
-        }
+    if submitted:
+        score = 0
+
+        for i, question in enumerate(questions):
+            if selected_answers[i] == question["options"][question["correct"]]:
+                score += 1
 
         st.session_state.quiz_submitted = True
-        st.rerun()
+        st.session_state.quiz_score = score
+        st.session_state.quiz_answers = selected_answers
 
-    else:
-      answers = st.session_state.quiz_answers
-      correct = sum(
-          1 for i, q in enumerate(quiz) if answers.get(i) == q["answer"]
-      )
+    if st.session_state.quiz_submitted:
+        st.success(
+            f"Твой результат: {st.session_state.quiz_score} из {len(questions)}"
+        )
 
-      total = len(quiz)
-      percent = round(correct / total * 100)
+        with st.expander("Посмотреть решения", expanded=True):
+            for i, question in enumerate(questions):
+                correct = question["options"][question["correct"]]
+                selected = st.session_state.quiz_answers[i]
 
-      st.success(f"Результат: {correct} из {total} — {percent}%")
-      st.progress(percent / 100)
+                st.markdown(f"**{question['q']}**")
 
-      if percent >= 80:
-        st.balloons()
-        st.write("🌟 Отличный результат!")
-      elif percent >= 50:
-        st.write("👍 Хорошая работа! Продолжай тренироваться.")
-      else:
-        st.write("💪 Разбери ошибки и попробуй снова.")
+                if selected == correct:
+                    st.write(f"✅ Правильно: {correct}")
+                else:
+                    st.write(f"❌ Твой ответ: {selected or 'не выбран'}")
+                    st.write(f"✅ Правильный ответ: {correct}")
 
-      st.subheader("Разбор ответов")
+                st.caption(question["explanation"])
 
-      for i, q in enumerate(quiz):
-        selected = answers.get(i)
-        right = q["answer"]
+        if st.button("Пройти тест заново"):
+            st.session_state.quiz_submitted = False
+            st.rerun()
 
-        if selected == right:
-          st.markdown(f"**Вопрос {i + 1}: ✅ Верно**")
-        else:
-          st.markdown(f"**Вопрос {i + 1}: ❌ Ошибка**")
 
-        st.write(q["question"])
-        st.write(f"Правильный ответ: {chr(65 + right)}. {q['options'][right]}")
-
-        if selected is not None:
-          st.write(
-              f"Твой ответ: {chr(65 + selected)}. {q['options'][selected]}"
-          )
-        else:
-          st.write("Ты пропустил этот вопрос.")
-
-        st.info(q.get("explanation", ""))
-        st.divider()
-
-      if st.button("🔄 Создать новый тест"):
-        st.session_state.quiz = None
-        st.session_state.quiz_answers = {}
-        st.session_state.quiz_submitted = False
-        st.rerun()
-
-  else:
-    st.info("Выбери предмет и нажми «Создать тест».")
-
+# ---------------- ПОДВАЛ ----------------
 
 st.divider()
-st.caption("ОРТ AI · Учись эффективнее каждый день")
+st.caption(
+    "ORT AI — учебный помощник для подготовки к Общереспубликанскому тестированию."
+)
