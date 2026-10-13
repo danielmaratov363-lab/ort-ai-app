@@ -11,7 +11,7 @@ st.set_page_config(
     layout="centered"
 )
 
-MODEL = "gemini-3.5-flash-lite"
+MODEL = "gemini-3.6-flash"
 MAX_OUTPUT_TOKENS = 2048
 
 SYSTEM_PROMPT = """
