@@ -4,7 +4,7 @@ import json
 import re
 import time
 import streamlit as st
-
+from supabase import create_client
 st.set_page_config(page_title="ОРТ AI", page_icon="🎓", layout="centered")
 
 SYSTEM_PROMPT = """
