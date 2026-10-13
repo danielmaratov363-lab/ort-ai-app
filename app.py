@@ -20,7 +20,7 @@ SYSTEM_PROMPT = """
 """
 
 # Актуальная и быстрая модель
-MODEL = "gemini-3.6-flash"
+MODEL = "gemini-3.5-flash-lite"
 
 SUBJECTS = ["Общий вопрос", "Математика", "Логика", "Аналогии", "Чтение"]
 
