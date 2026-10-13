@@ -20,7 +20,7 @@ SYSTEM_PROMPT = """
 """
 
 # Актуальная и быстрая модель
-MODEL = "gemini-3.5-flash-lite"
+MODEL = "gemini-3.6-flash"
 
 SUBJECTS = ["Общий вопрос", "Математика", "Логика", "Аналогии", "Чтение"]
 
@@ -42,7 +42,10 @@ if "quiz_submitted" not in st.session_state:
 
 @st.cache_resource
 def get_client():
-  return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    return genai.Client(
+        api_key=st.secrets["GEMINI_API_KEY"],
+        http_options={"timeout": 60000}
+    )
 
 
 def ask_ai(prompt, image_bytes=None, mime_type="image/jpeg"):
